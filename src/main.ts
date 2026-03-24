@@ -16,7 +16,6 @@ interface EngineStatus {
   enabled: boolean;
 }
 
-// Slider config: [id, fillId, badgeId, min, max, formatter]
 const SLIDERS: [string, string, string, number, number, (v: number) => string][] = [
   ["scroll-speed", "speed-fill", "speed-value", 0.5, 10, (v) => `${v.toFixed(1)}x`],
   ["acceleration", "accel-fill", "accel-value", 0, 1, (v) => v.toFixed(1)],
@@ -24,251 +23,184 @@ const SLIDERS: [string, string, string, number, number, (v: number) => string][]
   ["inertia-decay", "decay-fill", "decay-value", 0.8, 0.99, (v) => v.toFixed(2)],
 ];
 
-const MAX_START_RETRIES = 3;
-let startRetries = 0;
-let isPolling = false;
-// @ts-ignore: stored for cleanup on window unload
-let _pollTimer: ReturnType<typeof setInterval> | null = null;
-let fastPollTimer: ReturnType<typeof setInterval> | null = null;
+const MAX_RETRIES = 3;
+let retries = 0;
+let polling = false;
+let fastPoll: ReturnType<typeof setInterval> | null = null;
 
-function $(id: string): HTMLElement {
+function $(id: string) {
   const el = document.getElementById(id);
-  if (!el) throw new Error(`Element #${id} not found`);
+  if (!el) throw new Error(`#${id} not found`);
   return el;
 }
 
-function $input(id: string): HTMLInputElement {
+function $in(id: string) {
   return $(id) as HTMLInputElement;
 }
 
-// ─── Slider fill ────────────────────────────────────────────────────
+// ── Slider fills ──────────────────────
 
-function updateSliderFill(sliderId: string, fillId: string, min: number, max: number) {
-  const val = parseFloat($input(sliderId).value);
-  const pct = ((val - min) / (max - min)) * 100;
-  $(fillId).style.width = `${pct}%`;
-}
-
-function updateAllSliderFills() {
-  for (const [sliderId, fillId, , min, max] of SLIDERS) {
-    updateSliderFill(sliderId, fillId, min, max);
+function syncFills() {
+  for (const [sid, fid, bid, min, max, fmt] of SLIDERS) {
+    const v = parseFloat($in(sid).value);
+    $(fid).style.width = `${((v - min) / (max - min)) * 100}%`;
+    $(bid).textContent = fmt(v);
   }
 }
 
-// ─── Engine start ───────────────────────────────────────────────────
+// ── Engine ────────────────────────────
 
-async function tryStartEngine(): Promise<boolean> {
+async function tryStart(): Promise<boolean> {
   try {
     await invoke("start_scroll_engine");
-    startRetries = 0;
+    retries = 0;
     return true;
-  } catch (e) {
-    console.warn("Engine start failed:", e);
+  } catch {
     return false;
   }
 }
 
-// ─── Status display ─────────────────────────────────────────────────
+// ── Status ────────────────────────────
 
-async function updateStatusUI(status: EngineStatus) {
-  const dot = $("status-dot").querySelector(".dot");
-  if (!dot) return;
-  const sublabel = $("status-text");
+async function applyStatus(s: EngineStatus) {
+  const dot = $("status-dot");
+  const sub = $("status-text");
   const banner = $("permission-banner");
 
-  if (!status.accessibility_granted) {
-    dot.className = "dot warning";
-    sublabel.textContent = "Needs permission";
-    sublabel.className = "status-sublabel warning";
+  if (!s.accessibility_granted) {
+    dot.className = "indicator warn";
+    sub.textContent = "Needs permission";
+    sub.className = "row-sub warning";
     banner.style.display = "flex";
-    startRetries = 0;
-  } else if (status.enabled && status.running) {
-    dot.className = "dot active";
-    sublabel.textContent = "Running";
-    sublabel.className = "status-sublabel";
+    retries = 0;
+  } else if (s.enabled && s.running) {
+    dot.className = "indicator";
+    sub.textContent = "Running";
+    sub.className = "row-sub";
     banner.style.display = "none";
-    startRetries = 0;
-  } else if (status.enabled && !status.running) {
+    retries = 0;
+  } else if (s.enabled && !s.running) {
     banner.style.display = "none";
-    if (startRetries < MAX_START_RETRIES) {
-      dot.className = "dot warning";
-      sublabel.textContent = "Starting...";
-      sublabel.className = "status-sublabel warning";
-      startRetries++;
-      const started = await tryStartEngine();
-      if (started) {
-        dot.className = "dot active";
-        sublabel.textContent = "Running";
-        sublabel.className = "status-sublabel";
+    if (retries < MAX_RETRIES) {
+      dot.className = "indicator warn";
+      sub.textContent = "Starting...";
+      sub.className = "row-sub warning";
+      retries++;
+      if (await tryStart()) {
+        dot.className = "indicator";
+        sub.textContent = "Running";
+        sub.className = "row-sub";
       }
     } else {
-      dot.className = "dot inactive";
-      sublabel.textContent = "Failed to start";
-      sublabel.className = "status-sublabel warning";
+      dot.className = "indicator off";
+      sub.textContent = "Could not start";
+      sub.className = "row-sub warning";
     }
   } else {
-    dot.className = "dot inactive";
-    sublabel.textContent = "Paused";
-    sublabel.className = "status-sublabel inactive";
+    dot.className = "indicator off";
+    sub.textContent = "Off";
+    sub.className = "row-sub inactive";
     banner.style.display = "none";
-    startRetries = 0;
+    retries = 0;
   }
 }
 
-// ─── Settings I/O ───────────────────────────────────────────────────
-
-async function loadSettings() {
+async function poll() {
+  if (polling) return;
+  polling = true;
   try {
-    const settings: ScrollSettings = await invoke("get_settings");
-
-    $input("enabled-toggle").checked = settings.enabled;
-    $input("scroll-speed").value = String(settings.scroll_speed);
-    $input("acceleration").value = String(settings.acceleration);
-    $input("duration").value = String(settings.animation_duration);
-    $input("inertia-toggle").checked = settings.inertia;
-    $input("inertia-decay").value = String(settings.inertia_decay);
-
-    const easing = document.querySelector(
-      `input[name="easing"][value="${settings.easing}"]`
-    ) as HTMLInputElement | null;
-    if (easing) easing.checked = true;
-
-    updateBadges();
-    updateAllSliderFills();
-    updateDecayVisibility(settings.inertia);
-  } catch (e) {
-    console.error("Failed to load settings:", e);
-  }
+    const s: EngineStatus = await invoke("get_engine_status");
+    await applyStatus(s);
+  } catch { /* ignore */ }
+  finally { polling = false; }
 }
 
-function updateBadges() {
-  for (const [sliderId, , badgeId, , , fmt] of SLIDERS) {
-    const val = parseFloat($input(sliderId).value);
-    $(badgeId).textContent = fmt(val);
-  }
+// ── Settings ──────────────────────────
+
+async function load() {
+  try {
+    const s: ScrollSettings = await invoke("get_settings");
+    $in("enabled-toggle").checked = s.enabled;
+    $in("scroll-speed").value = String(s.scroll_speed);
+    $in("acceleration").value = String(s.acceleration);
+    $in("duration").value = String(s.animation_duration);
+    $in("inertia-toggle").checked = s.inertia;
+    $in("inertia-decay").value = String(s.inertia_decay);
+    const r = document.querySelector(`input[name="easing"][value="${s.easing}"]`) as HTMLInputElement | null;
+    if (r) r.checked = true;
+    syncFills();
+    setDecay(s.inertia);
+  } catch { /* first load may fail */ }
 }
 
-function getCurrentSettings(): ScrollSettings {
-  const easing = document.querySelector(
-    'input[name="easing"]:checked'
-  ) as HTMLInputElement | null;
-
-  return {
-    enabled: $input("enabled-toggle").checked,
-    scroll_speed: parseFloat($input("scroll-speed").value),
-    acceleration: parseFloat($input("acceleration").value),
-    animation_duration: parseFloat($input("duration").value),
-    inertia: $input("inertia-toggle").checked,
-    inertia_decay: parseFloat($input("inertia-decay").value),
-    easing: (easing?.value as ScrollSettings["easing"]) || "EaseOut",
-  };
+function setDecay(on: boolean) {
+  const el = $("decay-setting");
+  el.classList.toggle("disabled", !on);
+  if (!on) $in("inertia-decay").setAttribute("tabindex", "-1");
+  else $in("inertia-decay").removeAttribute("tabindex");
 }
 
-function updateDecayVisibility(enabled: boolean) {
-  const group = $("decay-setting");
-  const slider = $input("inertia-decay");
-  if (enabled) {
-    group.classList.remove("disabled");
-    slider.removeAttribute("tabindex");
-  } else {
-    group.classList.add("disabled");
-    slider.setAttribute("tabindex", "-1");
-  }
-}
+let saveTimer: ReturnType<typeof setTimeout>;
 
-let saveTimeout: ReturnType<typeof setTimeout>;
-
-function saveSettings() {
-  updateBadges();
-  updateAllSliderFills();
-
-  // Debounce at 150ms to avoid hammering the backend during slider drags
-  clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(async () => {
+function save() {
+  syncFills();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    const easing = document.querySelector('input[name="easing"]:checked') as HTMLInputElement | null;
     try {
-      const settings = getCurrentSettings();
-      await invoke("update_settings", { settings });
-    } catch (e) {
-      console.error("Failed to save settings:", e);
-    }
+      await invoke("update_settings", {
+        settings: {
+          enabled: $in("enabled-toggle").checked,
+          scroll_speed: parseFloat($in("scroll-speed").value),
+          acceleration: parseFloat($in("acceleration").value),
+          animation_duration: parseFloat($in("duration").value),
+          inertia: $in("inertia-toggle").checked,
+          inertia_decay: parseFloat($in("inertia-decay").value),
+          easing: easing?.value ?? "EaseOut",
+        },
+      });
+    } catch { /* ignore */ }
   }, 150);
 }
 
-// ─── Status polling (with re-entrance guard) ────────────────────────
-
-async function pollStatus() {
-  if (isPolling) return;
-  isPolling = true;
-  try {
-    const status: EngineStatus = await invoke("get_engine_status");
-    await updateStatusUI(status);
-  } catch (e) {
-    console.error("Status poll failed:", e);
-  } finally {
-    isPolling = false;
-  }
-}
-
-// ─── Init ───────────────────────────────────────────────────────────
+// ── Init ──────────────────────────────
 
 window.addEventListener("DOMContentLoaded", () => {
-  loadSettings();
-  pollStatus();
+  load();
+  poll();
+  setInterval(poll, 2000);
 
-  // Single poll interval — never stacked
-  _pollTimer = setInterval(pollStatus, 2000);
-
-  // Master toggle
-  $input("enabled-toggle").addEventListener("change", async () => {
-    const enabled = $input("enabled-toggle").checked;
-    saveSettings();
-
-    if (enabled) {
-      startRetries = 0;
-      await tryStartEngine();
+  $in("enabled-toggle").addEventListener("change", async () => {
+    save();
+    if ($in("enabled-toggle").checked) {
+      retries = 0;
+      await tryStart();
     } else {
-      try {
-        await invoke("stop_scroll_engine");
-      } catch (e) {
-        console.error("Failed to stop engine:", e);
-      }
+      try { await invoke("stop_scroll_engine"); } catch { /* */ }
     }
-    pollStatus();
+    poll();
   });
 
-  // Inertia toggle
-  $input("inertia-toggle").addEventListener("change", () => {
-    updateDecayVisibility($input("inertia-toggle").checked);
-    saveSettings();
+  $in("inertia-toggle").addEventListener("change", () => {
+    setDecay($in("inertia-toggle").checked);
+    save();
   });
 
-  // Range sliders
-  for (const [sliderId] of SLIDERS) {
-    $input(sliderId).addEventListener("input", () => saveSettings());
+  for (const [sid] of SLIDERS) {
+    $in(sid).addEventListener("input", save);
   }
 
-  // Easing radios
-  document.querySelectorAll('input[name="easing"]').forEach((radio) => {
-    radio.addEventListener("change", () => saveSettings());
+  document.querySelectorAll('input[name="easing"]').forEach((r) => {
+    r.addEventListener("change", save);
   });
 
-  // Permission button — opens System Settings, fast-polls for 30s
   $("open-accessibility-btn").addEventListener("click", async () => {
-    try {
-      await invoke("open_accessibility_settings");
-      // Clear any existing fast poll before starting a new one
-      if (fastPollTimer) clearInterval(fastPollTimer);
-      let fastPolls = 0;
-      fastPollTimer = setInterval(async () => {
-        await pollStatus();
-        fastPolls++;
-        if (fastPolls >= 15) {
-          if (fastPollTimer) clearInterval(fastPollTimer);
-          fastPollTimer = null;
-        }
-      }, 2000);
-    } catch (e) {
-      console.error("Failed to open accessibility settings:", e);
-    }
+    try { await invoke("open_accessibility_settings"); } catch { /* */ }
+    if (fastPoll) clearInterval(fastPoll);
+    let n = 0;
+    fastPoll = setInterval(async () => {
+      await poll();
+      if (++n >= 15) { clearInterval(fastPoll!); fastPoll = null; }
+    }, 2000);
   });
 });
