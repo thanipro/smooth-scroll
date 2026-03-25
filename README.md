@@ -85,6 +85,29 @@ Intercepts choppy, discrete scroll events from a regular mouse and replaces them
 | Acceleration | 0 – 1 | Extra speed boost for fast scroll gestures |
 | Glide | 0.80 – 0.99 | Velocity decay per frame — higher = more momentum |
 
+## Installation
+
+### From GitHub Releases
+
+1. Download the `.dmg` from the [latest release](https://github.com/thanipro/smooth-scroll/releases)
+2. Open the DMG and drag **Smooth Scroll** to Applications
+3. The app is not notarized yet, so macOS will block it. Run this once in Terminal:
+   ```bash
+   xattr -cr "/Applications/Smooth Scroll.app"
+   ```
+4. Launch Smooth Scroll — it will prompt for Accessibility permission on first run
+
+### Build from source
+
+```bash
+git clone https://github.com/thanipro/smooth-scroll.git
+cd smooth-scroll
+npm install
+npm run tauri build
+```
+
+The `.app` and `.dmg` will be in `src-tauri/target/release/bundle/`.
+
 ## Requirements
 
 - macOS 10.15+
