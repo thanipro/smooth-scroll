@@ -59,57 +59,20 @@
             <div class="track-fill" id="accel-fill"></div>
           </div>
         </div>
-        <div class="control">
-          <div class="control-label">
-            <span>Smoothness</span>
-            <span class="mono" id="duration-value">300ms</span>
-          </div>
-          <div class="track-wrap">
-            <input type="range" id="duration" min="50" max="800" step="25" value="300" />
-            <div class="track-fill" id="duration-fill"></div>
-          </div>
-        </div>
       </section>
 
       <!-- Momentum -->
       <section class="section">
-        <div class="row" style="margin-bottom: 12px">
-          <h2 style="margin: 0">Momentum</h2>
-          <label class="switch switch-sm">
-            <input type="checkbox" id="inertia-toggle" checked aria-label="Enable momentum scrolling" />
-            <span class="switch-track"></span>
-          </label>
-        </div>
-        <div id="decay-setting">
-          <div class="control">
-            <div class="control-label">
-              <span>Glide distance</span>
-              <span class="mono" id="decay-value">0.92</span>
-            </div>
-            <div class="track-wrap">
-              <input type="range" id="inertia-decay" min="0.8" max="0.99" step="0.01" value="0.92" />
-              <div class="track-fill" id="decay-fill"></div>
-            </div>
+        <h2>Momentum</h2>
+        <div class="control">
+          <div class="control-label">
+            <span>Glide</span>
+            <span class="mono" id="decay-value">0.92</span>
           </div>
-        </div>
-      </section>
-
-      <!-- Easing -->
-      <section class="section">
-        <h2>Easing</h2>
-        <div class="chips">
-          <label class="chip">
-            <input type="radio" name="easing" value="EaseOut" checked />
-            <span>Ease Out</span>
-          </label>
-          <label class="chip">
-            <input type="radio" name="easing" value="EaseInOut" />
-            <span>Ease In-Out</span>
-          </label>
-          <label class="chip">
-            <input type="radio" name="easing" value="Linear" />
-            <span>Linear</span>
-          </label>
+          <div class="track-wrap">
+            <input type="range" id="inertia-decay" min="0.8" max="0.99" step="0.01" value="0.92" />
+            <div class="track-fill" id="decay-fill"></div>
+          </div>
         </div>
       </section>
 

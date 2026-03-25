@@ -1,13 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 
+function log(...args: unknown[]) {
+  console.log("[SmoothScroll UI]", ...args);
+}
+
 interface ScrollSettings {
   enabled: boolean;
   scroll_speed: number;
   acceleration: number;
-  animation_duration: number;
-  inertia: boolean;
   inertia_decay: number;
-  easing: "Linear" | "EaseOut" | "EaseInOut";
 }
 
 interface EngineStatus {
@@ -19,7 +20,6 @@ interface EngineStatus {
 const SLIDERS: [string, string, string, number, number, (v: number) => string][] = [
   ["scroll-speed", "speed-fill", "speed-value", 0.5, 10, (v) => `${v.toFixed(1)}x`],
   ["acceleration", "accel-fill", "accel-value", 0, 1, (v) => v.toFixed(1)],
-  ["duration", "duration-fill", "duration-value", 50, 800, (v) => `${v}ms`],
   ["inertia-decay", "decay-fill", "decay-value", 0.8, 0.99, (v) => v.toFixed(2)],
 ];
 
@@ -51,11 +51,14 @@ function syncFills() {
 // ── Engine ────────────────────────────
 
 async function tryStart(): Promise<boolean> {
+  log("tryStart: invoking start_scroll_engine...");
   try {
     await invoke("start_scroll_engine");
     retries = 0;
+    log("tryStart: success");
     return true;
-  } catch {
+  } catch (e) {
+    log("tryStart: FAILED", e);
     return false;
   }
 }
@@ -110,34 +113,29 @@ async function poll() {
   polling = true;
   try {
     const s: EngineStatus = await invoke("get_engine_status");
+    log("poll: status →", s);
     await applyStatus(s);
-  } catch { /* ignore */ }
+  } catch (e) {
+    log("poll: error fetching status", e);
+  }
   finally { polling = false; }
 }
 
 // ── Settings ──────────────────────────
 
 async function load() {
+  log("load: fetching settings...");
   try {
     const s: ScrollSettings = await invoke("get_settings");
+    log("load: settings →", s);
     $in("enabled-toggle").checked = s.enabled;
     $in("scroll-speed").value = String(s.scroll_speed);
     $in("acceleration").value = String(s.acceleration);
-    $in("duration").value = String(s.animation_duration);
-    $in("inertia-toggle").checked = s.inertia;
     $in("inertia-decay").value = String(s.inertia_decay);
-    const r = document.querySelector(`input[name="easing"][value="${s.easing}"]`) as HTMLInputElement | null;
-    if (r) r.checked = true;
     syncFills();
-    setDecay(s.inertia);
-  } catch { /* first load may fail */ }
-}
-
-function setDecay(on: boolean) {
-  const el = $("decay-setting");
-  el.classList.toggle("disabled", !on);
-  if (!on) $in("inertia-decay").setAttribute("tabindex", "-1");
-  else $in("inertia-decay").removeAttribute("tabindex");
+  } catch (e) {
+    log("load: FAILED (may be normal on first load)", e);
+  }
 }
 
 let saveTimer: ReturnType<typeof setTimeout>;
@@ -146,26 +144,26 @@ function save() {
   syncFills();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
-    const easing = document.querySelector('input[name="easing"]:checked') as HTMLInputElement | null;
+    const payload = {
+      enabled: $in("enabled-toggle").checked,
+      scroll_speed: parseFloat($in("scroll-speed").value),
+      acceleration: parseFloat($in("acceleration").value),
+      inertia_decay: parseFloat($in("inertia-decay").value),
+    };
+    log("save: updating settings →", payload);
     try {
-      await invoke("update_settings", {
-        settings: {
-          enabled: $in("enabled-toggle").checked,
-          scroll_speed: parseFloat($in("scroll-speed").value),
-          acceleration: parseFloat($in("acceleration").value),
-          animation_duration: parseFloat($in("duration").value),
-          inertia: $in("inertia-toggle").checked,
-          inertia_decay: parseFloat($in("inertia-decay").value),
-          easing: easing?.value ?? "EaseOut",
-        },
-      });
-    } catch { /* ignore */ }
+      await invoke("update_settings", { settings: payload });
+      log("save: success");
+    } catch (e) {
+      log("save: FAILED", e);
+    }
   }, 150);
 }
 
 // ── Init ──────────────────────────────
 
 window.addEventListener("DOMContentLoaded", () => {
+  log("DOM loaded — initializing");
   load();
   poll();
   setInterval(poll, 2000);
@@ -181,18 +179,9 @@ window.addEventListener("DOMContentLoaded", () => {
     poll();
   });
 
-  $in("inertia-toggle").addEventListener("change", () => {
-    setDecay($in("inertia-toggle").checked);
-    save();
-  });
-
   for (const [sid] of SLIDERS) {
     $in(sid).addEventListener("input", save);
   }
-
-  document.querySelectorAll('input[name="easing"]').forEach((r) => {
-    r.addEventListener("change", save);
-  });
 
   $("open-accessibility-btn").addEventListener("click", async () => {
     try { await invoke("open_accessibility_settings"); } catch { /* */ }
