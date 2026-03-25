@@ -4,9 +4,9 @@ A macOS utility that adds smooth, fluid scrolling to any mouse — built with **
 
 ## The Story
 
-I was about to renew my SmoothScroll app subscription — $12/year just to make my mouse scroll smoothly. Then I thought: why am I paying for this? So I sat down with Claude and built this in about an hour.
+I was about to renew my SmoothScroll app subscription — $12/year just to make my mouse scroll smoothly. Then I thought: why am I paying for this? So I sat down and built this in about an hour.
 
-I didn't write the code myself. I described what I wanted, asked Claude to build it, reviewed the output, asked it to research performance issues, ran code reviews, and iterated until it was solid. The whole process took roughly one hour from idea to a working `.app` bundle.
+I also tried other free smooth scrolling apps, but none of them worked properly with Logi Options+ — they all skip continuous scroll events from the Logitech daemon, so scrolling just passes through unsmoothed. This one detects Logi Options+ events via scroll/momentum phase and handles them correctly.
 
 At least I don't have to pay for a scroll utility subscription anymore.
 
