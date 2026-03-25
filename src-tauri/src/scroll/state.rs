@@ -20,7 +20,7 @@ impl Default for ScrollSettings {
     fn default() -> Self {
         Self {
             enabled: true,
-            scroll_speed: 3.0,
+            scroll_speed: 0.5,
             acceleration: 0.5,
             inertia_decay: 0.92,
         }
