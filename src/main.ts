@@ -162,7 +162,22 @@ function save() {
 
 // ── Shortcuts ─────────────────────────
 
-interface ShortcutAction { type: "app"; name: string; toggle: boolean }
+type WindowOp = "left_half" | "right_half" | "maximize" | "center" | "next_display";
+type ShortcutAction =
+  | { type: "app"; name: string; toggle: boolean }
+  | { type: "window"; op: WindowOp };
+
+const WINDOW_LABELS: Record<WindowOp, string> = {
+  left_half: "Window: left half",
+  right_half: "Window: right half",
+  maximize: "Window: maximize",
+  center: "Window: centre",
+  next_display: "Window: next display",
+};
+
+function actionLabel(a: ShortcutAction): string {
+  return a.type === "app" ? a.name : WINDOW_LABELS[a.op];
+}
 interface ShortcutBinding { id: string; keys: string; action: ShortcutAction }
 interface ShortcutAvailability { available: boolean; status: string; detail: string }
 interface InstalledApp { name: string; path: string }
@@ -215,16 +230,20 @@ async function renderShortcuts() {
     kbd.textContent = prettyKeys(s.keys);
     const name = document.createElement("span");
     name.className = "app-name";
-    name.textContent = s.action.name;
-    const toggleWrap = document.createElement("label");
-    toggleWrap.className = "toggle-label";
-    toggleWrap.innerHTML = `<span>Toggle</span><label class="switch switch-sm"><input type="checkbox" ${s.action.toggle ? "checked" : ""} aria-label="Hide when already in front"><span class="switch-track"></span></label>`;
-    const cb = toggleWrap.querySelector("input") as HTMLInputElement;
-    cb.addEventListener("change", async () => {
-      try {
-        await invoke("update_shortcut", { id: s.id, action: { ...s.action, toggle: cb.checked } });
-      } catch (e) { log("update_shortcut failed", e); }
-    });
+    name.textContent = actionLabel(s.action);
+    let toggleWrap: HTMLElement | null = null;
+    if (s.action.type === "app") {
+      const action = s.action;
+      toggleWrap = document.createElement("label");
+      toggleWrap.className = "toggle-label";
+      toggleWrap.innerHTML = `<span>Toggle</span><label class="switch switch-sm"><input type="checkbox" ${action.toggle ? "checked" : ""} aria-label="Hide when already in front"><span class="switch-track"></span></label>`;
+      const cb = toggleWrap.querySelector("input") as HTMLInputElement;
+      cb.addEventListener("change", async () => {
+        try {
+          await invoke("update_shortcut", { id: s.id, action: { ...action, toggle: cb.checked } });
+        } catch (e) { log("update_shortcut failed", e); }
+      });
+    }
     const rm = document.createElement("button");
     rm.className = "btn-remove";
     rm.type = "button";
@@ -234,7 +253,9 @@ async function renderShortcuts() {
       try { await invoke("remove_shortcut", { id: s.id }); } catch (e) { log("remove_shortcut failed", e); }
       renderShortcuts();
     });
-    li.append(kbd, name, toggleWrap, rm);
+    li.append(kbd, name);
+    if (toggleWrap) li.append(toggleWrap);
+    li.append(rm);
     list.appendChild(li);
   }
 }
@@ -252,9 +273,19 @@ async function populateApps() {
   }
 }
 
+function selectedAction(): ShortcutAction | null {
+  const kind = ($("action-picker") as HTMLSelectElement).value;
+  if (kind === "app") {
+    const app = ($("app-picker") as HTMLSelectElement).value;
+    return app ? { type: "app", name: app, toggle: true } : null;
+  }
+  return { type: "window", op: kind as WindowOp };
+}
+
 function updateAddState() {
-  const picker = $("app-picker") as HTMLSelectElement;
-  ($("add-shortcut") as HTMLButtonElement).disabled = !(recordedKeys && picker.value);
+  const kind = ($("action-picker") as HTMLSelectElement).value;
+  ($("app-picker") as HTMLElement).style.display = kind === "app" ? "" : "none";
+  ($("add-shortcut") as HTMLButtonElement).disabled = !(recordedKeys && selectedAction());
 }
 
 async function probeKeys(keys: string) {
@@ -308,11 +339,13 @@ function initShortcutsUI() {
   }, true);
 
   picker.addEventListener("change", updateAddState);
+  $("action-picker").addEventListener("change", updateAddState);
 
   $("add-shortcut").addEventListener("click", async () => {
-    if (!recordedKeys || !picker.value) return;
+    const action = selectedAction();
+    if (!recordedKeys || !action) return;
     try {
-      await invoke("add_shortcut", { keys: recordedKeys, action: { type: "app", name: picker.value, toggle: true } });
+      await invoke("add_shortcut", { keys: recordedKeys, action });
       recordedKeys = null;
       rec.textContent = "Press keys…";
       rec.className = "key-recorder";

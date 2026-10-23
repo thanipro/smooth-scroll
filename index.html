@@ -82,10 +82,18 @@
         <ul class="shortcut-list" id="shortcut-list"></ul>
         <div class="shortcut-add">
           <button class="key-recorder" id="key-recorder" type="button" aria-label="Record key combination">Press keys…</button>
+          <select id="action-picker" aria-label="Action">
+            <option value="app">Open / toggle app</option>
+            <option value="left_half">Window: left half</option>
+            <option value="right_half">Window: right half</option>
+            <option value="maximize">Window: maximize</option>
+            <option value="center">Window: centre</option>
+            <option value="next_display">Window: next display</option>
+          </select>
           <select id="app-picker" aria-label="Application"></select>
           <button class="btn-primary" id="add-shortcut" type="button" disabled>Add</button>
         </div>
-        <p class="hint" id="shortcut-hint">Click the key box, then press a combination. Pressing it again while the app is in front hides it.</p>
+        <p class="hint" id="shortcut-hint">Click the key box, then press a combination. App shortcuts hide the app when pressed again while it is in front.</p>
       </section>
 
       <footer>v0.1.0</footer>

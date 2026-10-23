@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut as HotKey, ShortcutState};
+use crate::window::{self, WindowOp};
 
 // ─── Model ───────────────────────────────────────────────────────────
 
@@ -20,6 +21,17 @@ pub enum ShortcutAction {
         #[serde(default)]
         toggle: bool,
     },
+    /// Move/resize the frontmost app's focused window.
+    Window { op: WindowOp },
+}
+
+impl ShortcutAction {
+    pub fn label(&self) -> String {
+        match self {
+            ShortcutAction::App { name, .. } => name.clone(),
+            ShortcutAction::Window { op } => op.label().to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -59,6 +71,11 @@ pub struct ShortcutStore {
 // ─── Persistence ─────────────────────────────────────────────────────
 
 pub fn default_bindings() -> Vec<ShortcutBinding> {
+    let win = |id: &str, keys: &str, op: WindowOp| ShortcutBinding {
+        id: id.into(),
+        keys: keys.into(),
+        action: ShortcutAction::Window { op },
+    };
     vec![
         ShortcutBinding {
             id: "default-slack".into(),
@@ -70,19 +87,45 @@ pub fn default_bindings() -> Vec<ShortcutBinding> {
             keys: "Alt+T".into(),
             action: ShortcutAction::App { name: "Ghostty".into(), toggle: true },
         },
+        // Rectangle's conventions. ⌥⌘-arrows were deliberately avoided: they
+        // are Ghostty's split navigation and browsers' tab switching.
+        win("default-win-left", "Control+Alt+ArrowLeft", WindowOp::LeftHalf),
+        win("default-win-right", "Control+Alt+ArrowRight", WindowOp::RightHalf),
+        win("default-win-max", "Control+Alt+ArrowUp", WindowOp::Maximize),
+        win("default-win-center", "Control+Alt+ArrowDown", WindowOp::Center),
+        win("default-win-next", "Control+Alt+Command+ArrowRight", WindowOp::NextDisplay),
     ]
 }
 
+/// Marker file: which generation of defaults has been seeded into the user's
+/// list. Lets new defaults appear once for existing users without re-adding
+/// ones they deliberately removed.
+const SEED_GENERATION: u32 = 2;
+
 pub fn load_bindings(path: Option<&Path>) -> Vec<ShortcutBinding> {
     let Some(path) = path else { return default_bindings() };
-    match std::fs::read_to_string(path) {
+    let mut bindings: Vec<ShortcutBinding> = match std::fs::read_to_string(path) {
         Ok(txt) => serde_json::from_str(&txt).unwrap_or_else(|e| {
             eprintln!("[SmoothScroll] shortcuts.json unreadable ({e}); starting empty");
             Vec::new()
         }),
-        // No file yet = first run → seed defaults.
-        Err(_) => default_bindings(),
+        Err(_) => Vec::new(),
+    };
+    let marker = path.with_extension("seed");
+    let seeded: u32 = std::fs::read_to_string(&marker)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+    if seeded < SEED_GENERATION {
+        for d in default_bindings() {
+            if !bindings.iter().any(|b| b.id == d.id) {
+                bindings.push(d);
+            }
+        }
+        let _ = std::fs::write(&marker, SEED_GENERATION.to_string());
+        save_bindings(Some(path), &bindings);
     }
+    bindings
 }
 
 pub fn save_bindings(path: Option<&Path>, bindings: &[ShortcutBinding]) {
@@ -134,13 +177,10 @@ pub fn check_availability<R: Runtime>(app: &AppHandle<R>, keys: &str) -> Shortcu
     };
     if let Ok(bindings) = app.state::<ShortcutStore>().bindings.lock() {
         if let Some(b) = bindings.iter().find(|b| b.hotkey().as_ref() == Some(&hk)) {
-            let what = match &b.action {
-                ShortcutAction::App { name, .. } => name.clone(),
-            };
             return ShortcutAvailability {
                 available: false,
                 status: "used_here".into(),
-                detail: format!("Already assigned to {what} in Smooth Scroll"),
+                detail: format!("Already assigned to {} in Smooth Scroll", b.action.label()),
             };
         }
     }
@@ -176,6 +216,7 @@ pub fn handle_event<R: Runtime>(app: &AppHandle<R>, pressed: &HotKey, state: Sho
     dbg_log!("shortcut {} fired → {:?}", binding.keys, binding.action);
     match binding.action {
         ShortcutAction::App { name, toggle } => focus_or_toggle_app(&name, toggle),
+        ShortcutAction::Window { op } => window::perform(op),
     }
 }
 
