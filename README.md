@@ -80,6 +80,19 @@ Intercepts choppy, discrete scroll events from a regular mouse and replaces them
 - *Per-frame pixel cap* — time-based (4800px/s) to prevent jarring jumps, consistent across refresh rates
 - *Sub-pixel precision* — fractional remainders carried between frames to prevent drift
 
+## Shortcuts
+
+Global keyboard shortcuts that bring an app to the front, with an optional **toggle** that hides the app if it is already in front. Defaults on first run:
+
+| Keys | App |
+|------|-----|
+| ⌥S | Slack |
+| ⌥T | Ghostty |
+
+Add your own from the settings window: click the key box, press a combination (at least one modifier), pick an app. Before a shortcut is saved, the app does a trial registration, so it can tell you if the combination is already held by another app or by macOS — the only reliable way to detect that on macOS. Shortcuts persist in `~/Library/Application Support/com.smoothscroll.macos/shortcuts.json`.
+
+Note: ⌥-letter combos normally type special characters (⌥S = ß). A global shortcut takes those over system-wide.
+
 ## Settings
 
 | Setting | Range | Description |

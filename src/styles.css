@@ -374,3 +374,134 @@ footer {
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 3px; }
+
+/* ── Shortcuts ────────────────────────── */
+
+.shortcut-list {
+  list-style: none;
+  margin-bottom: 12px;
+}
+
+.shortcut-list:empty { margin-bottom: 0; }
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.shortcut-row:last-child { border-bottom: none; }
+
+.shortcut-row .app-name {
+  flex: 1;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shortcut-row .toggle-label {
+  font-size: 11px;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+kbd {
+  display: inline-flex;
+  gap: 2px;
+  min-width: 56px;
+  justify-content: center;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-family: -apple-system, system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 1px;
+}
+
+.btn-remove {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.btn-remove:hover { background: var(--red); color: #fff; }
+
+.shortcut-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.key-recorder {
+  min-width: 96px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
+
+.key-recorder.recording {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: var(--blue-dim);
+}
+
+.key-recorder.ok { border-color: var(--green); color: var(--text); }
+.key-recorder.bad { border-color: var(--red); color: var(--red); }
+
+#app-picker {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.btn-primary {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: none;
+  background: var(--blue);
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-primary:disabled { opacity: 0.4; cursor: default; }
+
+.hint {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.hint.warning { color: var(--amber); }
+.hint.error { color: var(--red); }
+.hint.ok { color: var(--green); }
