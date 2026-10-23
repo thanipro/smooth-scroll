@@ -14,6 +14,43 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 struct AppState {
     settings: Arc<Mutex<ScrollSettings>>,
     engine: Mutex<Option<ScrollEngine>>,
+    /// Where settings are persisted (`<app config dir>/settings.json`).
+    settings_path: Mutex<Option<std::path::PathBuf>>,
+}
+
+const SETTINGS_FILE: &str = "settings.json";
+
+/// `~/Library/Application Support/<bundle identifier>/settings.json` — the same
+/// directory Tauri's `app_config_dir()` resolves to on macOS, computed here so
+/// it is available before the app handle exists.
+fn settings_file_path(identifier: &str) -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(
+        std::path::PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join(identifier)
+            .join(SETTINGS_FILE),
+    )
+}
+
+/// Write the current settings to disk. Failures are logged, never fatal —
+/// a missing config dir must not break scrolling.
+fn persist_settings(state: &AppState) {
+    let path = match state.settings_path.lock() {
+        Ok(p) => p.clone(),
+        Err(_) => None,
+    };
+    let Some(path) = path else { return };
+    let snapshot = match state.settings.lock() {
+        Ok(s) => s.clone(),
+        Err(_) => return,
+    };
+    if let Err(e) = snapshot.save(&path) {
+        eprintln!("[SmoothScroll] Failed to save settings to {}: {e}", path.display());
+    } else {
+        dbg_log!("Settings saved to {}", path.display());
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -35,8 +72,11 @@ fn get_settings(state: tauri::State<AppState>) -> Result<ScrollSettings, String>
 #[tauri::command]
 fn update_settings(state: tauri::State<AppState>, settings: ScrollSettings) -> Result<(), String> {
     dbg_log!("update_settings ← {:?}", settings);
-    let mut current = state.settings.lock().map_err(|e| e.to_string())?;
-    *current = settings;
+    {
+        let mut current = state.settings.lock().map_err(|e| e.to_string())?;
+        *current = settings;
+    }
+    persist_settings(&state);
     Ok(())
 }
 
@@ -108,10 +148,14 @@ fn stop_scroll_engine(state: tauri::State<AppState>) -> Result<(), String> {
 }
 
 fn toggle_enabled(state: &tauri::State<AppState>) -> Result<bool, String> {
-    let mut settings = state.settings.lock().map_err(|e| e.to_string())?;
-    settings.enabled = !settings.enabled;
-    dbg_log!("toggle_enabled → now {}", settings.enabled);
-    Ok(settings.enabled)
+    let now_enabled = {
+        let mut settings = state.settings.lock().map_err(|e| e.to_string())?;
+        settings.enabled = !settings.enabled;
+        dbg_log!("toggle_enabled → now {}", settings.enabled);
+        settings.enabled
+    };
+    persist_settings(state);
+    Ok(now_enabled)
 }
 
 #[tauri::command]
@@ -130,12 +174,23 @@ pub fn run() {
     let ax_granted = request_accessibility_permission();
     dbg_log!("Accessibility permission (with prompt): {}", ax_granted);
 
-    let settings = Arc::new(Mutex::new(ScrollSettings::default()));
-    dbg_log!("Default settings: {:?}", *settings.lock().unwrap());
+    // Load persisted settings *before* the app (and its webview) is built, so
+    // the engine and the settings window both start from the saved values.
+    // Loading later in `setup` races the webview's initial `get_settings` call.
+    let context = tauri::generate_context!();
+    let settings_path = settings_file_path(&context.config().identifier);
+    let loaded = match &settings_path {
+        Some(p) => ScrollSettings::load(p),
+        None => ScrollSettings::default(),
+    };
+    dbg_log!("Settings from {:?}: {:?}", settings_path, loaded);
+    let loaded_enabled = loaded.enabled;
+    let settings = Arc::new(Mutex::new(loaded));
 
     let app_state = AppState {
         settings: settings.clone(),
         engine: Mutex::new(None),
+        settings_path: Mutex::new(settings_path),
     };
 
     tauri::Builder::default()
@@ -159,10 +214,10 @@ pub fn run() {
             stop_scroll_engine,
             toggle_scroll_engine,
         ])
-        .setup(|app| {
+        .setup(move |app| {
             dbg_log!("Tauri setup starting — building tray menu");
             let toggle = CheckMenuItemBuilder::with_id("toggle", "Smooth Scroll")
-                .checked(true)
+                .checked(loaded_enabled)
                 .build(app)?;
             let settings_item =
                 MenuItemBuilder::with_id("settings", "Settings...").build(app)?;
@@ -255,6 +310,6 @@ pub fn run() {
             dbg_log!("Tauri setup complete");
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }

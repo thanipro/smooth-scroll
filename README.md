@@ -68,10 +68,13 @@ Intercepts choppy, discrete scroll events from a regular mouse and replaces them
 1. Synthetic events are posted to `kCGSessionEventTap` (downstream of our HID-level tap, so they never reach our callback)
 2. Events are tagged with a sentinel value via `eventSourceUserData` (field 42) as a belt-and-suspenders guard
 
+**Tap Recovery** — macOS silently disables an event tap when its callback is too slow (`kCGEventTapDisabledByTimeout`) or after sustained user input (`kCGEventTapDisabledByUserInput`). Both are caught and the tap is re-enabled, so scrolling never quietly reverts to choppy until a restart.
+
 **Priority Inversion Avoidance** — Uses `std::sync::Mutex` (not `parking_lot`) because macOS's `pthread_mutex` supports priority inheritance. The event tap callback runs on a high-priority thread, so `parking_lot`'s userspace spinlock would cause priority inversion.
 
 **Scroll Physics**:
-- *Impulse ramp* — new impulses are fed into velocity over 4 frames for smooth starts
+- *Instant start* — the first tick from rest goes straight into velocity so the very next display frame moves; ramping it added ~33ms (120Hz) / ~67ms (60Hz) of dead time before every scroll
+- *Impulse ramp* — further ticks while already moving are fed into velocity over 4 frames for smooth continuation
 - *Two-phase decay* — faster decay at high velocity, slower glide tail for natural feel
 - *Direction reversal* — opposite momentum is killed instantly for responsive direction changes
 - *Per-frame pixel cap* — time-based (4800px/s) to prevent jarring jumps, consistent across refresh rates
@@ -84,6 +87,8 @@ Intercepts choppy, discrete scroll events from a regular mouse and replaces them
 | Scroll Speed | 0.5x – 10x | Impulse multiplier per wheel tick |
 | Acceleration | 0 – 1 | Extra speed boost for fast scroll gestures |
 | Glide | 0.80 – 0.99 | Velocity decay per frame — higher = more momentum |
+
+Settings persist across launches in `~/Library/Application Support/com.smoothscroll.macos/settings.json`.
 
 ## Installation
 

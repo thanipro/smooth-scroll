@@ -196,8 +196,13 @@ pub(super) unsafe extern "C" fn on_scroll_event(
         return event;
     }
 
-    if event_type == ffi::TAP_DISABLED_BY_TIMEOUT {
-        dbg_log!("on_scroll_event: TAP_DISABLED_BY_TIMEOUT — re-enabling tap");
+    if event_type == ffi::TAP_DISABLED_BY_TIMEOUT
+        || event_type == ffi::TAP_DISABLED_BY_USER_INPUT
+    {
+        // macOS disables a tap when its callback is too slow (timeout) or when
+        // the user holds a key/button long enough (user input). Either way, if we
+        // don't re-enable, scrolling silently reverts to choppy until restart.
+        dbg_log!("on_scroll_event: tap disabled (0x{event_type:X}) — re-enabling");
         let ctx = &*(user_info as *const TapContext);
         if let Ok(port) = ctx.tap_port.lock() {
             if !port.is_null() {
@@ -306,8 +311,18 @@ pub(super) unsafe extern "C" fn on_scroll_event(
             state.remainder_x = 0.0;
         }
 
-        state.pending_impulse_y += impulse_y;
-        state.pending_impulse_x += impulse_x;
+        // First tick from rest: apply the impulse straight to velocity so the
+        // very next display frame moves. Ramping it over IMPULSE_RAMP_FRAMES
+        // added ~33ms at 120Hz (~67ms at 60Hz) of dead time before every scroll
+        // started, which reads as lag on single-tick nudges. Subsequent ticks
+        // while already moving still ramp in for a smooth feel.
+        if state.is_idle() {
+            state.velocity_y = (state.velocity_y + impulse_y).clamp(-VELOCITY_CAP, VELOCITY_CAP);
+            state.velocity_x = (state.velocity_x + impulse_x).clamp(-VELOCITY_CAP, VELOCITY_CAP);
+        } else {
+            state.pending_impulse_y += impulse_y;
+            state.pending_impulse_x += impulse_x;
+        }
 
         // Clamp pending to prevent extreme accumulation
         state.pending_impulse_y =

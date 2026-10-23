@@ -168,6 +168,13 @@ window.addEventListener("DOMContentLoaded", () => {
   poll();
   setInterval(poll, 2000);
 
+  // The window is hidden, not destroyed, when closed. Re-read settings each
+  // time it comes back so tray toggles made while it was hidden are reflected.
+  window.addEventListener("focus", () => {
+    log("window focused — reloading settings");
+    load();
+  });
+
   $in("enabled-toggle").addEventListener("change", async () => {
     save();
     if ($in("enabled-toggle").checked) {
