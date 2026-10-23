@@ -26,6 +26,7 @@ pub const TAP_OPTION_DEFAULT: u32 = 0;
 
 pub const SCROLL_WHEEL: u32 = 22;
 pub const TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFF_FFFE;
+pub const TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFF_FFFF;
 pub const PIXEL_UNITS: u32 = 1;
 
 // CGEvent field IDs

@@ -16,6 +16,31 @@ pub struct ScrollSettings {
     pub inertia_decay: f64,
 }
 
+impl ScrollSettings {
+    /// Load settings from `path`, falling back to defaults if the file is
+    /// missing or unreadable. Out-of-range values are clamped to the UI ranges.
+    pub fn load(path: &std::path::Path) -> Self {
+        let mut s = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|txt| serde_json::from_str::<ScrollSettings>(&txt).ok())
+            .unwrap_or_default();
+        s.scroll_speed = s.scroll_speed.clamp(0.5, 10.0);
+        s.acceleration = s.acceleration.clamp(0.0, 1.0);
+        s.inertia_decay = s.inertia_decay.clamp(0.80, 0.99);
+        s
+    }
+
+    /// Persist settings to `path` (creating parent directories as needed).
+    pub fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        std::fs::write(path, json)
+    }
+}
+
 impl Default for ScrollSettings {
     fn default() -> Self {
         Self {

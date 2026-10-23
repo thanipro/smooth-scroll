@@ -14,6 +14,29 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 struct AppState {
     settings: Arc<Mutex<ScrollSettings>>,
     engine: Mutex<Option<ScrollEngine>>,
+    /// Where settings are persisted (`<app config dir>/settings.json`).
+    settings_path: Mutex<Option<std::path::PathBuf>>,
+}
+
+const SETTINGS_FILE: &str = "settings.json";
+
+/// Write the current settings to disk. Failures are logged, never fatal —
+/// a missing config dir must not break scrolling.
+fn persist_settings(state: &AppState) {
+    let path = match state.settings_path.lock() {
+        Ok(p) => p.clone(),
+        Err(_) => None,
+    };
+    let Some(path) = path else { return };
+    let snapshot = match state.settings.lock() {
+        Ok(s) => s.clone(),
+        Err(_) => return,
+    };
+    if let Err(e) = snapshot.save(&path) {
+        eprintln!("[SmoothScroll] Failed to save settings to {}: {e}", path.display());
+    } else {
+        dbg_log!("Settings saved to {}", path.display());
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -35,8 +58,11 @@ fn get_settings(state: tauri::State<AppState>) -> Result<ScrollSettings, String>
 #[tauri::command]
 fn update_settings(state: tauri::State<AppState>, settings: ScrollSettings) -> Result<(), String> {
     dbg_log!("update_settings ← {:?}", settings);
-    let mut current = state.settings.lock().map_err(|e| e.to_string())?;
-    *current = settings;
+    {
+        let mut current = state.settings.lock().map_err(|e| e.to_string())?;
+        *current = settings;
+    }
+    persist_settings(&state);
     Ok(())
 }
 
@@ -108,10 +134,14 @@ fn stop_scroll_engine(state: tauri::State<AppState>) -> Result<(), String> {
 }
 
 fn toggle_enabled(state: &tauri::State<AppState>) -> Result<bool, String> {
-    let mut settings = state.settings.lock().map_err(|e| e.to_string())?;
-    settings.enabled = !settings.enabled;
-    dbg_log!("toggle_enabled → now {}", settings.enabled);
-    Ok(settings.enabled)
+    let now_enabled = {
+        let mut settings = state.settings.lock().map_err(|e| e.to_string())?;
+        settings.enabled = !settings.enabled;
+        dbg_log!("toggle_enabled → now {}", settings.enabled);
+        settings.enabled
+    };
+    persist_settings(state);
+    Ok(now_enabled)
 }
 
 #[tauri::command]
@@ -136,6 +166,7 @@ pub fn run() {
     let app_state = AppState {
         settings: settings.clone(),
         engine: Mutex::new(None),
+        settings_path: Mutex::new(None),
     };
 
     tauri::Builder::default()
@@ -160,9 +191,32 @@ pub fn run() {
             toggle_scroll_engine,
         ])
         .setup(|app| {
+            // Load persisted settings before the engine starts so the first
+            // scroll already uses them. Previously every launch reset to defaults.
+            let state: tauri::State<AppState> = app.state();
+            let loaded_enabled = match app.path().app_config_dir() {
+                Ok(dir) => {
+                    let path = dir.join(SETTINGS_FILE);
+                    let loaded = ScrollSettings::load(&path);
+                    dbg_log!("Loaded settings from {}: {:?}", path.display(), loaded);
+                    let enabled = loaded.enabled;
+                    if let Ok(mut s) = state.settings.lock() {
+                        *s = loaded;
+                    }
+                    if let Ok(mut p) = state.settings_path.lock() {
+                        *p = Some(path);
+                    }
+                    enabled
+                }
+                Err(e) => {
+                    eprintln!("[SmoothScroll] No app config dir ({e}); settings will not persist");
+                    true
+                }
+            };
+
             dbg_log!("Tauri setup starting — building tray menu");
             let toggle = CheckMenuItemBuilder::with_id("toggle", "Smooth Scroll")
-                .checked(true)
+                .checked(loaded_enabled)
                 .build(app)?;
             let settings_item =
                 MenuItemBuilder::with_id("settings", "Settings...").build(app)?;
