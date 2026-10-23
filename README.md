@@ -1,6 +1,6 @@
 # Smooth Scroll
 
-A macOS utility that adds smooth, fluid scrolling to any mouse — built with **Tauri v2** and **Rust**.
+Smooth mouse scrolling, global app shortcuts and window snapping for macOS — one ~5 MB menu bar app, built with **Tauri v2** and **Rust**.
 
 ## The Story
 
@@ -8,53 +8,126 @@ I was about to renew my SmoothScroll app subscription — $12/year just to make 
 
 I also tried other free smooth scrolling apps, but none of them worked properly with Logi Options+ — they all skip continuous scroll events from the Logitech daemon, so scrolling just passes through unsmoothed. This one detects Logi Options+ events via scroll/momentum phase and handles them correctly.
 
-At least I don't have to pay for a scroll utility subscription anymore.
+Since the app already holds the Accessibility permission it needs for scroll interception, it turned out to be the natural home for the other small utilities I was paying for or installing separately: a hotkey to jump to Slack or the terminal, and window snapping. So those moved in too.
 
 ## What It Does
 
-Intercepts choppy, discrete scroll events from a regular mouse and replaces them with smooth, velocity-based pixel scrolling — the same feel you get from a trackpad or Magic Mouse.
+### 1. Smooth scrolling
+
+Intercepts choppy, discrete scroll events from a regular mouse and replaces them with smooth, velocity-based scrolling — the same feel you get from a trackpad or Magic Mouse.
 
 - **Works with Logitech mice** — detects Logi Options+ continuous events via scroll/momentum phase detection
 - **Trackpad scrolling is left untouched** — real trackpad events (with non-zero phase) pass through unmodified
 - **Works system-wide** across all apps
-- **Menu bar only** — no dock icon, runs as a lightweight tray utility (~5MB)
+- **Instant start** — the first wheel tick from rest moves on the very next display frame
+- **Self-healing** — if macOS disables the event tap (slow callback or sustained input), it is re-enabled automatically instead of silently reverting to choppy scrolling
+
+### 2. Global shortcuts
+
+Keyboard shortcuts that work in every app, configured from the settings window.
+
+- **Open / toggle an app** — brings the app to the front; with **Toggle** on, pressing the key while that app is already in front hides it, so one key gets you in and out
+- **Taken-combo detection** — before a shortcut is saved it is trial-registered, so the UI tells you whether the combination is *Available*, *Already assigned* in Smooth Scroll, *Held by another app or macOS*, or invalid. macOS refuses to register a hotkey another process owns, and that refusal is the only reliable signal there is
+- **Safe recorder** — click the key box and press a combination. At least one modifier (⌥ ⌃ ⇧ ⌘) is required, so a shortcut can never swallow ordinary typing. Escape cancels
+- **No extra permission** — shortcuts use the system hotkey API, not the event tap
+
+### 3. Window snapping
+
+Move and resize the frontmost app's focused window with a key, without installing Rectangle or Magnet.
+
+| Action | What it does |
+|--------|--------------|
+| Left half / Right half | Fill the left or right half of the window's current display |
+| Maximize | Fill the display's visible area (menu bar and Dock excluded). Not macOS full-screen |
+| Centre | Centre the window on its display, keeping its size |
+| Next display | Move to the next display, keeping position and size proportional |
+
+The display used is the one that contains the window's centre, so it works naturally across multiple monitors.
+
+### 4. Menu bar app
+
+- **Menu bar only** — no Dock icon
 - **Close = hide** — closing the settings window hides it; quit from the tray menu
 - **Launch at Login** — toggle from the tray menu
+- **On/off switch** for smooth scrolling in the tray menu and the settings window (shortcuts and window actions keep working either way)
+
+## Default Shortcuts
+
+Seeded on first run. Every one can be removed or rebound.
+
+| Keys | Action |
+|------|--------|
+| ⌥S | Slack (toggle) |
+| ⌥T | Ghostty (toggle) |
+| ⌃⌥← | Window: left half |
+| ⌃⌥→ | Window: right half |
+| ⌃⌥↑ | Window: maximize |
+| ⌃⌥↓ | Window: centre |
+| ⌃⌥⌘→ | Window: next display |
+
+Window actions follow Rectangle's ⌃⌥ convention. ⌥⌘-arrows were avoided on purpose: Ghostty uses them for split navigation and browsers for tab switching, and a global hotkey would silently break both.
+
+Note: ⌥-letter combos normally type special characters (⌥S = ß, ⌥T = †). A global shortcut takes those over system-wide. Use ⌃⌥ or ⌃⌥⌘ combinations if you need the characters.
+
+## Settings
+
+| Setting | Range | Description |
+|---------|-------|-------------|
+| Scroll Speed | 0.5x – 10x | Impulse multiplier per wheel tick |
+| Acceleration | 0 – 1 | Extra speed boost for fast scroll gestures |
+| Glide | 0.80 – 0.99 | Velocity decay per frame — higher = more momentum |
+
+Everything persists in `~/Library/Application Support/com.smoothscroll.macos/`:
+
+| File | Contents |
+|------|----------|
+| `settings.json` | Scroll speed, acceleration, glide, on/off |
+| `shortcuts.json` | Your shortcut list (keys + action) |
+| `shortcuts.seed` | Which generation of defaults has been seeded, so new defaults appear once without re-adding ones you removed |
+
+## Known Limitations
+
+- **Full-screen windows cannot be snapped.** macOS does not let the Accessibility API move or resize a window in full-screen mode. The action is logged and the window is left alone — the same limit Rectangle has.
+- **Fixed-size windows only move.** Apps that refuse resizing (some settings panels) get the position change but keep their size.
+- **Shortcuts inside other apps are not detected.** The taken-combo check sees hotkeys held globally by other processes and by macOS. It cannot see a shortcut that only exists in a specific app's menus (for example ⌥⌘← in Ghostty).
+- **Reduce Motion makes scrolling look stepped.** Synthetic scroll events are currently emitted in line units, so part of the smooth feel comes from macOS's own scroll animation; with Accessibility → Reduce Motion on, that animation is off. Moving to pixel-unit events is planned.
+- **macOS only.**
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Tauri v2 App                      │
-│                                                      │
-│  ┌──────────────┐     Tauri Commands     ┌────────┐ │
-│  │  Webview UI   │ ◄──────────────────► │  Rust   │ │
-│  │  (Settings)   │    get/update         │ Backend │ │
-│  │  HTML/CSS/TS  │    settings           │         │ │
-│  └──────────────┘                        └────┬───┘ │
-│                                               │      │
-│  ┌────────────────────────────────────────────┘      │
-│  │                                                    │
-│  │  ┌─────────────────┐    ┌──────────────────────┐  │
-│  │  │  CGEventTap      │    │  CVDisplayLink       │  │
-│  │  │  (HID level)     │    │  (display-synced)    │  │
-│  │  │                  │    │                      │  │
-│  │  │  Intercepts raw  │───►│  Emits velocity-     │  │
-│  │  │  scroll events   │    │  based smooth pixel  │  │
-│  │  │  from mouse      │    │  scroll events at    │  │
-│  │  │                  │    │  monitor refresh     │  │
-│  │  │                  │    │  rate (60/120Hz)     │  │
-│  │  └─────────────────┘    └──────────────────────┘  │
-│  │         │                         │                │
-│  │    Suppresses                Posts to               │
-│  │    original                  kCGSessionEventTap     │
-│  │    event                     (tagged with           │
-│  │                              sentinel marker)       │
-│  └────────────────────────────────────────────────────┘
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                         Tauri v2 App                          │
+│                                                               │
+│  ┌──────────────┐     Tauri Commands      ┌───────────────┐  │
+│  │  Webview UI   │ ◄───────────────────► │  Rust Backend  │  │
+│  │  (Settings)   │  settings, shortcuts   │                │  │
+│  │  HTML/CSS/TS  │  check/add/remove      │                │  │
+│  └──────────────┘                         └───┬───────┬───┘  │
+│                                               │       │       │
+│  ┌────────────────────────────────────────────┘       │       │
+│  │  SCROLL                                            │       │
+│  │  ┌─────────────────┐    ┌──────────────────────┐   │       │
+│  │  │  CGEventTap      │    │  CVDisplayLink       │   │       │
+│  │  │  (HID level)     │───►│  (display-synced)    │   │       │
+│  │  │  intercepts raw  │    │  emits velocity-     │   │       │
+│  │  │  wheel events    │    │  based scroll events │   │       │
+│  │  └─────────────────┘    └──────────────────────┘   │       │
+│  │                                                     │       │
+│  │  SHORTCUTS                                          │       │
+│  │  ┌─────────────────┐    ┌──────────────────────┐   │       │
+│  │  │  Carbon hotkeys  │───►│  App action:         │◄──┘       │
+│  │  │  (global-hotkey) │    │   NSWorkspace focus  │           │
+│  │  │  fire on main    │    │   / hide             │           │
+│  │  │  thread          │    │  Window action:      │           │
+│  │  │                  │    │   AXUIElement move   │           │
+│  │  │                  │    │   + resize           │           │
+│  │  └─────────────────┘    └──────────────────────┘           │
+│  └────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────┘
 ```
 
-### Key Design Decisions
+### Key Design Decisions — scrolling
 
 **Velocity-Based Scroll Model** — Each mouse wheel tick adds an impulse to a velocity accumulator. Every display frame emits `velocity` pixels of scroll, then decays velocity. This produces smooth, consistent movement like a native macOS trackpad — no choppy position-animation stepping.
 
@@ -72,6 +145,8 @@ Intercepts choppy, discrete scroll events from a regular mouse and replaces them
 
 **Priority Inversion Avoidance** — Uses `std::sync::Mutex` (not `parking_lot`) because macOS's `pthread_mutex` supports priority inheritance. The event tap callback runs on a high-priority thread, so `parking_lot`'s userspace spinlock would cause priority inversion.
 
+**Settings load before the app is built** — persisted settings are read before `tauri::Builder` runs, so the engine and the settings window both start from the saved values. Loading later in `setup` raced the webview's first request for settings.
+
 **Scroll Physics**:
 - *Instant start* — the first tick from rest goes straight into velocity so the very next display frame moves; ramping it added ~33ms (120Hz) / ~67ms (60Hz) of dead time before every scroll
 - *Impulse ramp* — further ticks while already moving are fed into velocity over 4 frames for smooth continuation
@@ -80,35 +155,17 @@ Intercepts choppy, discrete scroll events from a regular mouse and replaces them
 - *Per-frame pixel cap* — time-based (4800px/s) to prevent jarring jumps, consistent across refresh rates
 - *Sub-pixel precision* — fractional remainders carried between frames to prevent drift
 
-## Shortcuts
+### Key Design Decisions — shortcuts and windows
 
-Global keyboard shortcuts that bring an app to the front, with an optional **toggle** that hides the app if it is already in front. Defaults on first run:
+**Carbon hotkeys, not the event tap** — `tauri-plugin-global-shortcut` registers combos with `RegisterEventHotKey`. They fire in every app, need no extra permission, and are dispatched on the main thread, which is what AppKit's screen APIs require anyway.
 
-| Keys | Action |
-|------|--------|
-| ⌥S | Slack (toggle) |
-| ⌥T | Ghostty (toggle) |
-| ⌃⌥← | Window: left half |
-| ⌃⌥→ | Window: right half |
-| ⌃⌥↑ | Window: maximize |
-| ⌃⌥↓ | Window: centre |
-| ⌃⌥⌘→ | Window: next display |
+**Trial registration as the availability check** — the only way to know whether another process holds a combo is to try to register it. The check registers, reads the result, and unregisters immediately.
 
-Window actions move the frontmost app's focused window through the Accessibility API (the permission the app already holds for scrolling), so no extra tiling app is needed. ⌃⌥-arrows follow Rectangle's convention; ⌥⌘-arrows were avoided on purpose because Ghostty uses them for split navigation and browsers for tab switching.
+**App focus via NSWorkspace** — the frontmost app is matched on its bundle file name (`Slack.app`), which is stable across localisation; hiding uses `NSRunningApplication.hide`. Bringing an app forward is plain `open -a`, which also launches it if it is not running.
 
-Add your own from the settings window: click the key box, press a combination (at least one modifier), pick an app. Before a shortcut is saved, the app does a trial registration, so it can tell you if the combination is already held by another app or by macOS — the only reliable way to detect that on macOS. Shortcuts persist in `~/Library/Application Support/com.smoothscroll.macos/shortcuts.json`.
+**Window moves via the Accessibility API** — `AXUIElementCreateApplication(pid)` → `AXFocusedWindow` → set `AXPosition` and `AXSize`. Screen rectangles come from `NSScreen.visibleFrame` (bottom-left origin) and are flipped to AX's top-left origin around the primary display's height. Attributes are set position → size → position, because some apps clamp to a minimum size and shift, and others refuse a position that is off-screen for the *current* size.
 
-Note: ⌥-letter combos normally type special characters (⌥S = ß). A global shortcut takes those over system-wide.
-
-## Settings
-
-| Setting | Range | Description |
-|---------|-------|-------------|
-| Scroll Speed | 0.5x – 10x | Impulse multiplier per wheel tick |
-| Acceleration | 0 – 1 | Extra speed boost for fast scroll gestures |
-| Glide | 0.80 – 0.99 | Velocity decay per frame — higher = more momentum |
-
-Settings persist across launches in `~/Library/Application Support/com.smoothscroll.macos/settings.json`.
+**Default seeding by generation** — `shortcuts.seed` records which generation of defaults has been merged into the user's list. New defaults appear once for existing users; a default the user deleted is never re-added.
 
 ## Installation
 
@@ -133,10 +190,22 @@ npm run tauri build
 
 The `.app` and `.dmg` will be in `src-tauri/target/release/bundle/`.
 
+If you rebuild and reinstall often, sign with a stable identity so the Accessibility grant survives reinstalls (macOS ties the grant to the code signature):
+
+```bash
+APPLE_SIGNING_IDENTITY="Apple Development: Your Name (TEAMID)" npm run tauri build
+```
+
+If a reinstall ever leaves the app saying "Needs permission" while the toggle in System Settings still shows on, reset the stale entry and relaunch:
+
+```bash
+tccutil reset Accessibility com.smoothscroll.macos
+```
+
 ## Requirements
 
 - macOS 10.15+
-- **Accessibility permission** — required for `CGEventTap` to intercept scroll events. The app prompts you to grant this on first launch.
+- **Accessibility permission** — required for `CGEventTap` to intercept scroll events and for window snapping. The app prompts you to grant this on first launch. Global shortcuts need nothing extra.
 
 ## Development
 
@@ -151,26 +220,35 @@ npm run tauri dev
 npm run tauri build
 ```
 
+Debug builds write a log to `/tmp/smooth-scroll-debug.log` (the `dbg_log!` macro); it is compiled out of release builds.
+
 ### Project Structure
 
 ```
 src-tauri/src/
-├── lib.rs            # Tauri commands, tray menu, app lifecycle
+├── lib.rs            # Tauri commands, tray menu, app lifecycle, settings persistence
 ├── logging.rs        # Shared debug logging (dbg_log! macro)
 ├── main.rs           # Entry point
+├── shortcuts.rs      # Shortcut model, persistence, registration, availability check, app actions
+├── window.rs         # Window snapping via the Accessibility API + NSScreen geometry
 └── scroll/
     ├── mod.rs        # Public API, accessibility helpers
     ├── ffi.rs        # CoreGraphics/CoreVideo/mach FFI bindings
-    ├── state.rs      # ScrollSettings, ScrollState, physics constants
+    ├── state.rs      # ScrollSettings (+ load/save), ScrollState, physics constants
     ├── physics.rs    # Frame processing, event callbacks
     └── engine.rs     # ScrollEngine lifecycle, thread management
+
+src/
+├── main.ts           # Settings UI: sliders, status polling, shortcut recorder and list
+└── styles.css
+index.html
 ```
 
 ### Stack
 
 - **Frontend**: Vanilla TypeScript + CSS (no framework)
-- **Backend**: Rust with raw CoreGraphics/CoreVideo FFI
-- **Framework**: Tauri v2
+- **Backend**: Rust with raw CoreGraphics/CoreVideo/ApplicationServices FFI, `objc2-app-kit` for NSWorkspace/NSScreen
+- **Framework**: Tauri v2 (`tauri-plugin-global-shortcut`, `tauri-plugin-autostart`, `tauri-plugin-opener`)
 - **Build**: Vite + Cargo
 - **CI**: GitHub Actions — builds DMG on release
 
