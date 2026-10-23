@@ -84,10 +84,17 @@ Intercepts choppy, discrete scroll events from a regular mouse and replaces them
 
 Global keyboard shortcuts that bring an app to the front, with an optional **toggle** that hides the app if it is already in front. Defaults on first run:
 
-| Keys | App |
-|------|-----|
-| ⌥S | Slack |
-| ⌥T | Ghostty |
+| Keys | Action |
+|------|--------|
+| ⌥S | Slack (toggle) |
+| ⌥T | Ghostty (toggle) |
+| ⌃⌥← | Window: left half |
+| ⌃⌥→ | Window: right half |
+| ⌃⌥↑ | Window: maximize |
+| ⌃⌥↓ | Window: centre |
+| ⌃⌥⌘→ | Window: next display |
+
+Window actions move the frontmost app's focused window through the Accessibility API (the permission the app already holds for scrolling), so no extra tiling app is needed. ⌃⌥-arrows follow Rectangle's convention; ⌥⌘-arrows were avoided on purpose because Ghostty uses them for split navigation and browsers for tab switching.
 
 Add your own from the settings window: click the key box, press a combination (at least one modifier), pick an app. Before a shortcut is saved, the app does a trial registration, so it can tell you if the combination is already held by another app or by macOS — the only reliable way to detect that on macOS. Shortcuts persist in `~/Library/Application Support/com.smoothscroll.macos/shortcuts.json`.
 

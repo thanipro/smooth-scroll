@@ -470,6 +470,7 @@ kbd {
 .key-recorder.ok { border-color: var(--green); color: var(--text); }
 .key-recorder.bad { border-color: var(--red); color: var(--red); }
 
+#action-picker,
 #app-picker {
   flex: 1;
   min-width: 0;

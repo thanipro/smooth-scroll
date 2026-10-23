@@ -2,6 +2,7 @@
 mod logging;
 mod scroll;
 mod shortcuts;
+mod window;
 
 use scroll::{has_accessibility_permission, request_accessibility_permission, ScrollEngine, ScrollSettings};
 use std::sync::{Arc, Mutex};
@@ -276,10 +277,6 @@ pub fn run() {
         .as_ref()
         .and_then(|p| p.parent().map(|d| d.join(SHORTCUTS_FILE)));
     let bindings = shortcuts::load_bindings(shortcuts_path.as_deref());
-    // Seed the file on first run so the defaults are visible and editable.
-    if shortcuts_path.as_ref().is_some_and(|p| !p.exists()) {
-        shortcuts::save_bindings(shortcuts_path.as_deref(), &bindings);
-    }
     let shortcut_store = ShortcutStore { bindings: Mutex::new(bindings), path: shortcuts_path };
 
     let app_state = AppState {
