@@ -1,6 +1,7 @@
 #[macro_use]
 mod logging;
 mod scroll;
+mod shortcuts;
 
 use scroll::{has_accessibility_permission, request_accessibility_permission, ScrollEngine, ScrollSettings};
 use std::sync::{Arc, Mutex};
@@ -10,6 +11,8 @@ use tauri::{
     Manager,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
+use shortcuts::{ShortcutAction, ShortcutAvailability, ShortcutBinding, ShortcutStore};
 
 struct AppState {
     settings: Arc<Mutex<ScrollSettings>>,
@@ -19,6 +22,7 @@ struct AppState {
 }
 
 const SETTINGS_FILE: &str = "settings.json";
+const SHORTCUTS_FILE: &str = "shortcuts.json";
 
 /// `~/Library/Application Support/<bundle identifier>/settings.json` — the same
 /// directory Tauri's `app_config_dir()` resolves to on macOS, computed here so
@@ -163,6 +167,87 @@ fn toggle_scroll_engine(state: tauri::State<AppState>) -> Result<bool, String> {
     toggle_enabled(&state)
 }
 
+// ─── Shortcut commands ───────────────────────────────────────────────
+
+#[tauri::command]
+fn list_shortcuts(store: tauri::State<ShortcutStore>) -> Result<Vec<ShortcutBinding>, String> {
+    Ok(store.bindings.lock().map_err(|e| e.to_string())?.clone())
+}
+
+#[tauri::command]
+fn check_shortcut(app: tauri::AppHandle, keys: String) -> ShortcutAvailability {
+    shortcuts::check_availability(&app, &keys)
+}
+
+#[tauri::command]
+fn add_shortcut(
+    app: tauri::AppHandle,
+    store: tauri::State<ShortcutStore>,
+    keys: String,
+    action: ShortcutAction,
+) -> Result<ShortcutBinding, String> {
+    let probe = shortcuts::check_availability(&app, &keys);
+    if !probe.available {
+        return Err(probe.detail);
+    }
+    let hk = keys
+        .parse::<tauri_plugin_global_shortcut::Shortcut>()
+        .map_err(|e| e.to_string())?;
+    app.global_shortcut().register(hk).map_err(|e| e.to_string())?;
+    let binding = ShortcutBinding {
+        id: format!("{:x}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)),
+        keys,
+        action,
+    };
+    {
+        let mut b = store.bindings.lock().map_err(|e| e.to_string())?;
+        b.push(binding.clone());
+        shortcuts::save_bindings(store.path.as_deref(), &b);
+    }
+    Ok(binding)
+}
+
+#[tauri::command]
+fn update_shortcut(
+    store: tauri::State<ShortcutStore>,
+    id: String,
+    action: ShortcutAction,
+) -> Result<(), String> {
+    let mut b = store.bindings.lock().map_err(|e| e.to_string())?;
+    let Some(entry) = b.iter_mut().find(|s| s.id == id) else {
+        return Err("Shortcut not found".into());
+    };
+    entry.action = action;
+    shortcuts::save_bindings(store.path.as_deref(), &b);
+    Ok(())
+}
+
+#[tauri::command]
+fn remove_shortcut(
+    app: tauri::AppHandle,
+    store: tauri::State<ShortcutStore>,
+    id: String,
+) -> Result<(), String> {
+    let mut b = store.bindings.lock().map_err(|e| e.to_string())?;
+    let Some(pos) = b.iter().position(|s| s.id == id) else {
+        return Err("Shortcut not found".into());
+    };
+    let removed = b.remove(pos);
+    if let Ok(hk) = removed.keys.parse::<tauri_plugin_global_shortcut::Shortcut>() {
+        let _ = app.global_shortcut().unregister(hk);
+    }
+    shortcuts::save_bindings(store.path.as_deref(), &b);
+    Ok(())
+}
+
+#[tauri::command]
+fn list_apps() -> Vec<shortcuts::InstalledApp> {
+    shortcuts::installed_apps()
+}
+
 // ─── App entry point ─────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -187,6 +272,16 @@ pub fn run() {
     let loaded_enabled = loaded.enabled;
     let settings = Arc::new(Mutex::new(loaded));
 
+    let shortcuts_path = settings_path
+        .as_ref()
+        .and_then(|p| p.parent().map(|d| d.join(SHORTCUTS_FILE)));
+    let bindings = shortcuts::load_bindings(shortcuts_path.as_deref());
+    // Seed the file on first run so the defaults are visible and editable.
+    if shortcuts_path.as_ref().is_some_and(|p| !p.exists()) {
+        shortcuts::save_bindings(shortcuts_path.as_deref(), &bindings);
+    }
+    let shortcut_store = ShortcutStore { bindings: Mutex::new(bindings), path: shortcuts_path };
+
     let app_state = AppState {
         settings: settings.clone(),
         engine: Mutex::new(None),
@@ -196,7 +291,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    shortcuts::handle_event(app, shortcut, event.state);
+                })
+                .build(),
+        )
         .manage(app_state)
+        .manage(shortcut_store)
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 dbg_log!("Window close requested — hiding instead of quitting");
@@ -213,6 +316,12 @@ pub fn run() {
             start_scroll_engine,
             stop_scroll_engine,
             toggle_scroll_engine,
+            list_shortcuts,
+            check_shortcut,
+            add_shortcut,
+            update_shortcut,
+            remove_shortcut,
+            list_apps,
         ])
         .setup(move |app| {
             dbg_log!("Tauri setup starting — building tray menu");
@@ -306,6 +415,9 @@ pub fn run() {
                     dbg_log!("Auto-start FAILED: {e}");
                 }
             }
+
+            // Global shortcuts (plugin is initialised by now)
+            shortcuts::register_all(app.handle());
 
             dbg_log!("Tauri setup complete");
             Ok(())

@@ -160,6 +160,174 @@ function save() {
   }, 150);
 }
 
+// ── Shortcuts ─────────────────────────
+
+interface ShortcutAction { type: "app"; name: string; toggle: boolean }
+interface ShortcutBinding { id: string; keys: string; action: ShortcutAction }
+interface ShortcutAvailability { available: boolean; status: string; detail: string }
+interface InstalledApp { name: string; path: string }
+
+const MOD_SYMBOLS: Record<string, string> = { Control: "⌃", Alt: "⌥", Shift: "⇧", Command: "⌘" };
+
+/** "Alt+Shift+S" → "⌥⇧S" for display. */
+function prettyKeys(keys: string): string {
+  return keys.split("+").map((t) => MOD_SYMBOLS[t] ?? t).join("");
+}
+
+/** Turn a KeyboardEvent into global-hotkey syntax, or null if it is only modifiers. */
+function comboFromEvent(e: KeyboardEvent): string | null {
+  const mods: string[] = [];
+  if (e.ctrlKey) mods.push("Control");
+  if (e.altKey) mods.push("Alt");
+  if (e.shiftKey) mods.push("Shift");
+  if (e.metaKey) mods.push("Command");
+  const c = e.code;
+  let key: string | null = null;
+  if (/^Key[A-Z]$/.test(c)) key = c.slice(3);
+  else if (/^Digit[0-9]$/.test(c)) key = c.slice(5);
+  else if (/^F([1-9]|1[0-9]|2[0-4])$/.test(c)) key = c;
+  else if (["Space", "Enter", "Tab", "Escape", "Backspace", "Delete", "Home", "End", "PageUp", "PageDown",
+            "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Minus", "Equal", "Comma", "Period", "Slash",
+            "Semicolon", "Quote", "BracketLeft", "BracketRight", "Backslash", "Backquote"].includes(c)) key = c;
+  if (!key) return null;
+  if (mods.length === 0) return null; // refuse bare keys: they would swallow normal typing
+  return [...mods, key].join("+");
+}
+
+let recordedKeys: string | null = null;
+let recording = false;
+
+function setHint(text: string, cls = "") {
+  const h = $("shortcut-hint");
+  h.textContent = text;
+  h.className = "hint" + (cls ? ` ${cls}` : "");
+}
+
+async function renderShortcuts() {
+  const list = $("shortcut-list");
+  let items: ShortcutBinding[] = [];
+  try { items = await invoke("list_shortcuts"); } catch (e) { log("list_shortcuts failed", e); }
+  list.innerHTML = "";
+  for (const s of items) {
+    const li = document.createElement("li");
+    li.className = "shortcut-row";
+    const kbd = document.createElement("kbd");
+    kbd.textContent = prettyKeys(s.keys);
+    const name = document.createElement("span");
+    name.className = "app-name";
+    name.textContent = s.action.name;
+    const toggleWrap = document.createElement("label");
+    toggleWrap.className = "toggle-label";
+    toggleWrap.innerHTML = `<span>Toggle</span><label class="switch switch-sm"><input type="checkbox" ${s.action.toggle ? "checked" : ""} aria-label="Hide when already in front"><span class="switch-track"></span></label>`;
+    const cb = toggleWrap.querySelector("input") as HTMLInputElement;
+    cb.addEventListener("change", async () => {
+      try {
+        await invoke("update_shortcut", { id: s.id, action: { ...s.action, toggle: cb.checked } });
+      } catch (e) { log("update_shortcut failed", e); }
+    });
+    const rm = document.createElement("button");
+    rm.className = "btn-remove";
+    rm.type = "button";
+    rm.textContent = "×";
+    rm.setAttribute("aria-label", `Remove ${s.keys}`);
+    rm.addEventListener("click", async () => {
+      try { await invoke("remove_shortcut", { id: s.id }); } catch (e) { log("remove_shortcut failed", e); }
+      renderShortcuts();
+    });
+    li.append(kbd, name, toggleWrap, rm);
+    list.appendChild(li);
+  }
+}
+
+async function populateApps() {
+  const picker = $("app-picker") as HTMLSelectElement;
+  if (picker.options.length > 0) return;
+  let apps: InstalledApp[] = [];
+  try { apps = await invoke("list_apps"); } catch (e) { log("list_apps failed", e); }
+  for (const a of apps) {
+    const o = document.createElement("option");
+    o.value = a.name;
+    o.textContent = a.name;
+    picker.appendChild(o);
+  }
+}
+
+function updateAddState() {
+  const picker = $("app-picker") as HTMLSelectElement;
+  ($("add-shortcut") as HTMLButtonElement).disabled = !(recordedKeys && picker.value);
+}
+
+async function probeKeys(keys: string) {
+  const rec = $("key-recorder");
+  try {
+    const r: ShortcutAvailability = await invoke("check_shortcut", { keys });
+    rec.className = "key-recorder " + (r.available ? "ok" : "bad");
+    setHint(r.detail, r.available ? "ok" : r.status === "used_here" ? "warning" : "error");
+    if (!r.available) recordedKeys = null;
+  } catch (e) {
+    rec.className = "key-recorder bad";
+    setHint(String(e), "error");
+    recordedKeys = null;
+  }
+  updateAddState();
+}
+
+function initShortcutsUI() {
+  const rec = $("key-recorder");
+  const picker = $("app-picker") as HTMLSelectElement;
+
+  rec.addEventListener("click", () => {
+    recording = true;
+    recordedKeys = null;
+    rec.textContent = "Press keys…";
+    rec.className = "key-recorder recording";
+    setHint("Press a key combination with at least one modifier (⌥ ⌃ ⇧ ⌘).");
+    updateAddState();
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (!recording) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === "Escape") {
+      recording = false;
+      rec.textContent = "Press keys…";
+      rec.className = "key-recorder";
+      setHint("");
+      return;
+    }
+    const combo = comboFromEvent(e);
+    if (!combo) {
+      rec.textContent = [e.ctrlKey && "⌃", e.altKey && "⌥", e.shiftKey && "⇧", e.metaKey && "⌘"].filter(Boolean).join("") || "Press keys…";
+      return;
+    }
+    recording = false;
+    recordedKeys = combo;
+    rec.textContent = prettyKeys(combo);
+    probeKeys(combo);
+  }, true);
+
+  picker.addEventListener("change", updateAddState);
+
+  $("add-shortcut").addEventListener("click", async () => {
+    if (!recordedKeys || !picker.value) return;
+    try {
+      await invoke("add_shortcut", { keys: recordedKeys, action: { type: "app", name: picker.value, toggle: true } });
+      recordedKeys = null;
+      rec.textContent = "Press keys…";
+      rec.className = "key-recorder";
+      setHint("Added.", "ok");
+      updateAddState();
+      renderShortcuts();
+    } catch (e) {
+      setHint(String(e), "error");
+    }
+  });
+
+  renderShortcuts();
+  populateApps().then(updateAddState);
+}
+
 // ── Init ──────────────────────────────
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -173,7 +341,10 @@ window.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("focus", () => {
     log("window focused — reloading settings");
     load();
+    renderShortcuts();
   });
+
+  initShortcutsUI();
 
   $in("enabled-toggle").addEventListener("change", async () => {
     save();
